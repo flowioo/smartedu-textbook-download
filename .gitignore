@@ -26,3 +26,7 @@ targets.json
 # SmartEdu skill local state (含敏感 access_token)
 skills/*/token.json
 skills/*/targets.json
+
+# Cache directories (smartedu 教材目录, 首次跑自动生成)
+skills/smartedu-textbook-download/cache/
+skills/smartedu-textbook-download/cache/**

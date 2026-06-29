@@ -84,8 +84,22 @@ python3 get_token_cdp.py
 | `download_batch.py` | 仅下载 (假定 token + targets 已存在) |
 | `get_token_cdp.py` | 仅抓 token (CDP 读 localStorage) |
 | `rename_to_official_titles.py` | 把 PDF 重命名为 smartedu 官方书名 |
-| `cache/` | 离线缓存 (3637 本教材目录 + 32 本 metadata) |
+| `cache/` | **(运行时自动生成, 不在 git 里)** 离线缓存 smartedu 教材目录 |
 | `SKILL.md` | 本文件 |
+
+## 首次运行
+
+**需要网络**: 首次跑会从 smartedu CDN 下载教材目录 (32MB) 到 `cache/` 目录。
+之后所有运行都走本地 cache, 不再需要网络, 也不依赖 CDN 路由。
+
+**CDN 路由抽风怎么办**: smartedu CDN 经常改 DNS / SNI 配置, 详见下方"已知陷阱"。
+
+要重建 cache:
+
+```bash
+rm -rf cache/             # 强制下次跑时重新下载
+python3 download_all.py
+```
 
 ## 默认下载清单
 

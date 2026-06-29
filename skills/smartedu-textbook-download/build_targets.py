@@ -47,6 +47,8 @@ def fetch_json(url):
 
 def load_cache(cache_dir):
     """Load from local cache if available."""
+    if not cache_dir:
+        return None
     cache_dir = os.path.abspath(cache_dir)
     data_version_path = os.path.join(cache_dir, "data_version.json")
     if not os.path.exists(data_version_path):
@@ -68,19 +70,43 @@ def load_cache(cache_dir):
     return books
 
 
-def load_network():
-    """Fetch from smartedu CDN (may fail)."""
+def load_network(cache_dir=None):
+    """Fetch from smartedu CDN (may fail).
+
+    If cache_dir is provided, also save the fetched data to cache so the
+    next run is offline. Saves:
+      - cache/data_version.json
+      - cache/part_<n>.json (one per part URL)
+    """
     print("📡 从 CDN 拉目录 (首次或 cache 失效)...")
     dv = fetch_json(DATA_VERSION)
     urls = dv["urls"].split(",")
     seen = set()
     books = []
+    part_files = {}  # url → (filename, data)
+
     for u in urls:
         if u in seen:
             continue
         seen.add(u)
-        books.append(fetch_json(u))
-    return [b for batch in books for b in batch]
+        fname = u.split("/")[-1]
+        data = fetch_json(u)
+        books.extend(data)
+        part_files[u] = (fname, data)
+
+    # Save to cache if path given
+    if cache_dir:
+        cache_dir = os.path.abspath(cache_dir)
+        os.makedirs(cache_dir, exist_ok=True)
+        with open(os.path.join(cache_dir, "data_version.json"), "w") as f:
+            json.dump(dv, f, ensure_ascii=False, indent=2)
+        for url, (fname, data) in part_files.items():
+            with open(os.path.join(cache_dir, fname), "w") as f:
+                json.dump(data, f, ensure_ascii=False)
+        print(f"💾 已保存到 cache: {cache_dir} "
+              f"({len(part_files)} part 文件, {len(books)} 本书)")
+
+    return books
 
 
 def load_all_books(cache_dir):
@@ -89,7 +115,7 @@ def load_all_books(cache_dir):
     if cached:
         print(f"📦 使用本地 cache ({len(cached)} 本书) from {cache_dir}")
         return cached
-    return load_network()
+    return load_network(cache_dir)
 
 
 def parse_tags(book):
@@ -211,8 +237,8 @@ def main():
     if cache_dir is None and not args.no_cache:
         cache_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "cache")
-        if not os.path.isdir(cache_dir):
-            cache_dir = None
+        # 不检查 isdir — 让 load_network 自己创建, 这样首次运行也能用
+        # (如果 --no-cache 显式指定, 则完全不写 cache)
 
     # Build target spec
     spec = DEFAULT_TARGETS
