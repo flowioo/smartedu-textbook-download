@@ -23,3 +23,6 @@ targets.json
 *.log
 *.tmp
 *.crdownload
+# SmartEdu skill local state (含敏感 access_token)
+skills/*/token.json
+skills/*/targets.json
