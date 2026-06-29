@@ -25,24 +25,50 @@ DEFAULT_TARGETS = [
 ]
 
 
-def fetch_json(url):
-    """Fetch via curl subprocess (Python urllib3 has DNS/SNI issues on cbern CDN)."""
+def fetch_json(url, max_retries=2):
+    """Fetch via curl subprocess.
+
+    Why curl (not Python requests/urllib)?
+    ---------------------------------------
+    s-file-1.ykt.cbern.com.cn DNS resolves to Baidu CDN IP
+    (cdn.bcebos.com). That CDN expects SNI = *.cdn.bcebos.com,
+    but the cert is wildcard *.ykt.cbern.com.cn. Python's urllib3
+    uses the resolved IP's expected SNI → cert mismatch.
+
+    curl does the right thing (uses requested host for SNI).
+
+    Fallback: if s-file-1/2 fails with SSL/connection error, retry
+    with the other host (s-file-X.ykt.cbern.com.cn mirrors s-file-Y).
+    """
     import tempfile
-    with tempfile.NamedTemporaryFile(mode="r", suffix=".json", delete=False) as f:
-        tmp_path = f.name
-    try:
-        r = subprocess.run(
-            ["curl", "-sSL", "--fail", url, "-o", tmp_path],
-            capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            raise RuntimeError(f"curl failed for {url}: {r.stderr}")
-        with open(tmp_path) as f:
-            return json.load(f)
-    finally:
+
+    # Detect s-file-1/2 fallback
+    url_attempts = [url]
+    if "s-file-1.ykt.cbern.com.cn" in url:
+        url_attempts.append(url.replace("s-file-1.", "s-file-2."))
+    elif "s-file-2.ykt.cbern.com.cn" in url:
+        url_attempts.append(url.replace("s-file-2.", "s-file-1."))
+
+    last_error = None
+    for attempt_url in url_attempts:
+        with tempfile.NamedTemporaryFile(mode="r", suffix=".json", delete=False) as f:
+            tmp_path = f.name
         try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
+            r = subprocess.run(
+                ["curl", "-sSL", "--fail", attempt_url, "-o", tmp_path],
+                capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                with open(tmp_path) as f:
+                    return json.load(f)
+            last_error = RuntimeError(
+                f"curl failed for {attempt_url}: {r.stderr.strip()}")
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+    raise last_error
 
 
 def load_cache(cache_dir):
@@ -71,28 +97,52 @@ def load_cache(cache_dir):
 
 
 def load_network(cache_dir=None):
-    """Fetch from smartedu CDN (may fail).
+    """Fetch from smartedu CDN (may fail on individual parts).
 
     If cache_dir is provided, also save the fetched data to cache so the
     next run is offline. Saves:
-      - cache/data_version.json
-      - cache/part_<n>.json (one per part URL)
+      - cache/data_version.json (on success)
+      - cache/part_<n>.json (per part, even if others fail)
+
+    CDN 路由经常抽风 (s-file-1/2 DNS 漂到百度云), 所以单 part 失败时
+    不抛异常 — 把它从返回里剔除, 但继续保存成功的 part。
     """
     print("📡 从 CDN 拉目录 (首次或 cache 失效)...")
-    dv = fetch_json(DATA_VERSION)
+    try:
+        dv = fetch_json(DATA_VERSION)
+    except Exception as e:
+        raise RuntimeError(
+            f"无法拉取 data_version.json (smartedu CDN 不可达): {e}\n"
+            f"  重试, 或参考 SKILL.md 已知陷阱。")
+
     urls = dv["urls"].split(",")
     seen = set()
     books = []
     part_files = {}  # url → (filename, data)
+    failed = []
 
     for u in urls:
         if u in seen:
             continue
         seen.add(u)
         fname = u.split("/")[-1]
-        data = fetch_json(u)
+        try:
+            data = fetch_json(u)
+        except Exception as e:
+            failed.append((fname, str(e)))
+            continue
         books.extend(data)
         part_files[u] = (fname, data)
+
+    if failed:
+        print(f"⚠️  {len(failed)} part 拉取失败 (CDN 路由抽风), 已跳过:")
+        for fname, err in failed:
+            print(f"     {fname}: {err[:80]}")
+
+    if not books:
+        raise RuntimeError(
+            f"所有 part 都拉取失败, 无法继续。\n"
+            f"  smartedu CDN 路由可能完全不可用, 稍后重试。")
 
     # Save to cache if path given
     if cache_dir:
@@ -104,7 +154,7 @@ def load_network(cache_dir=None):
             with open(os.path.join(cache_dir, fname), "w") as f:
                 json.dump(data, f, ensure_ascii=False)
         print(f"💾 已保存到 cache: {cache_dir} "
-              f"({len(part_files)} part 文件, {len(books)} 本书)")
+              f"({len(part_files)}/{len(urls)} part 文件, {len(books)} 本书)")
 
     return books
 
