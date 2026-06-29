@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Output: token + targets (含敏感 token, 不入库)
+token.json
+targets.json
+
+# Runtime
+*.log
+*.tmp
+*.crdownload
